@@ -79,6 +79,11 @@ type Hello struct {
 	PID     int       `json:"pid"`
 	Started time.Time `json:"started"`
 	Host    HostInfo  `json:"host"`
+	// Exe is the server's executable, and ExeTime when it was modified
+	// last as the server started: a development build compares them with
+	// its own, to replace a server of an older build.
+	Exe     string    `json:"exe,omitempty"`
+	ExeTime time.Time `json:"exeTime,omitzero"`
 }
 
 // HostInfo describes the machine the server runs on.

@@ -52,22 +52,29 @@ terminal plugin (Ghostty's libghostty-vt). No webview, no cgo: one ~15 MB app.
 | ⌘K | Clear |
 | ⌥⌘Q | Quit and end all sessions |
 
-## Run and build
+## Develop and build
 
-It builds against a MyGo checkout next to it (`replace` in `go.mod`), which
-has three additions to the terminal plugin this app needs:
-`Options.Transparent` (the panes are translucent), and `Terminal.Resize` and
-`Terminal.Snapshot` (the server's headless screens).
+GoRex needs [Go](https://go.dev/dl/) 1.27+ and MyGo 0.2.11, whose CLI
+`go.mod` pins as a tool:
 
 ```sh
-go run .                            # the app (starts the server when none runs)
-go test ./...                       # the server, and the view without a window
-go run ../mygo/cmd/mygo build .     # build/darwin-arm64/GoRex.app and a .dmg
-go run ./tools/mkicon               # redraw resources/icon.png
+go tool mygo dev     # GoRex Dev, rebuilt and restarted as the code changes
+go test ./...        # the server, and the view without a window
+go tool mygo build   # build/darwin-arm64/GoRex.app and a .dmg
+go run ./tools/mkicon  # redraw resources/icon.png
 ```
 
-State lives in `~/Library/Application Support/GoRex` (`GOREX_DIR` moves it):
-the server's socket, log, `layout.json` and `settings.json`.
+`go get -tool github.com/egoist/mygo/cmd/mygo@latest` updates MyGo and its
+CLI together.
+
+The app keeps its state in its data directory: the server's socket and
+log, `layout.json` and `settings.json`, in `~/Library/Application
+Support/GoRex` for the built app and `GoRex Dev` for `mygo dev`'s, so
+that developing never touches the sessions of the app you use
+(`GOREX_DIR` names another directory). The sessions outlive the app, but
+not a rebuild: a development build replaces a server that an older build
+started, ending its sessions, which then start again in the same
+directories.
 
 ## Layout
 

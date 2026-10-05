@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -46,6 +48,35 @@ func Connect() (*Client, error) {
 	c := &Client{conn: conn, pending: map[int64]chan Response{}, closed: make(chan struct{})}
 	go c.read()
 	return c, nil
+}
+
+// Executable returns the path of the running executable and when it was
+// modified last.
+func Executable() (string, time.Time) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", time.Time{}
+	}
+	if p, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = p
+	}
+	st, err := os.Stat(exe)
+	if err != nil {
+		return exe, time.Time{}
+	}
+	return exe, st.ModTime()
+}
+
+// Restart shuts the server down, ending its sessions, waits for it to
+// exit, and connects to a new one.
+func (c *Client) Restart(pid int) (*Client, error) {
+	c.Shutdown()
+	c.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for pid > 0 && processAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	return Connect()
 }
 
 // Closed is closed once the connection to the server is lost.

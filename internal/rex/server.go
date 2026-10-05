@@ -37,6 +37,8 @@ type Server struct {
 	host     HostInfo
 	hostDone chan struct{}
 	ln       net.Listener
+	exe      string
+	exeTime  time.Time
 	controls int
 	idleFrom time.Time
 	quit     chan struct{}
@@ -76,6 +78,7 @@ func Serve() error {
 	if b, err := os.ReadFile(filepath.Join(dir, "layout.json")); err == nil && json.Valid(b) {
 		s.layout = b
 	}
+	s.exe, s.exeTime = Executable()
 	go func() {
 		s.host = hostInfo()
 		close(s.hostDone)
@@ -229,7 +232,7 @@ func (s *Server) do(req Request) (any, error) {
 		case <-s.hostDone:
 		case <-time.After(3 * time.Second):
 		}
-		return Hello{Version: ProtocolVersion, PID: os.Getpid(), Started: s.started, Host: s.host}, nil
+		return Hello{Version: ProtocolVersion, PID: os.Getpid(), Started: s.started, Host: s.host, Exe: s.exe, ExeTime: s.exeTime}, nil
 	case "list":
 		s.mu.Lock()
 		all := make([]*session, 0, len(s.order))

@@ -3,7 +3,7 @@
 // so that they outlive the app: quit it, open it again, and every tab and
 // pane is back as it was, its programs still running.
 //
-//	go run .            the app
+//	go tool mygo dev    the app, rebuilt as the code changes
 //	go run . -server    the session server alone, in the foreground
 package main
 
@@ -30,10 +30,17 @@ func main() {
 		}
 		return
 	}
+	// The state of the sessions lives in the app's data directory, which
+	// the server it starts takes from GOREX_DIR: "GoRex", or "GoRex Dev"
+	// under mygo dev, which keeps the installed app's sessions apart.
+	if os.Getenv("GOREX_DIR") == "" {
+		if dir, err := mygo.App.Path(mygo.PathUserData); err == nil {
+			os.Setenv("GOREX_DIR", dir)
+		}
+	}
 	registerFonts()
 	loadSettings()
 	a := &App{}
-	mygo.App.SetName("GoRex")
 	mygo.App.SetMenu(a.menu())
 	mygo.App.WhenReady(a.open)
 	mygo.App.OnActivate(func(hasVisibleWindows bool) {
@@ -65,6 +72,19 @@ func (a *App) open() {
 	}
 	a.client = client
 	a.hello, err = client.Hello()
+	if err == nil && mygo.IsDev() && staleServer(a.hello) {
+		// A server a build before this one started runs that build's
+		// code: start one of this build's, ending its sessions.
+		if client, err = client.Restart(a.hello.PID); err == nil {
+			a.client = client
+			a.hello, err = client.Hello()
+		} else {
+			log.Print(err)
+			mygo.Dialog.Error("GoRex could not restart its session server", err.Error())
+			mygo.App.Quit()
+			return
+		}
+	}
 	if err == nil && a.hello.Version != rex.ProtocolVersion {
 		a.err = "The session server is of another version of GoRex: quit and end all sessions to restart it."
 	}
@@ -131,4 +151,11 @@ func (a *App) reset() {
 	a.tabs, a.active, a.focusReq = nil, 0, nil
 	a.paletteOpen, a.hostOpen, a.renaming = false, false, nil
 	a.saveDue, a.quitting, a.lastSnapshot, a.title = false, false, "", ""
+}
+
+// staleServer reports whether the server runs another build of the app
+// than this one, as after mygo dev rebuilt it.
+func staleServer(h rex.Hello) bool {
+	exe, at := rex.Executable()
+	return h.Exe != exe || !h.ExeTime.Equal(at)
 }
