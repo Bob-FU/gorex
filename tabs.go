@@ -18,13 +18,13 @@ const (
 	tileStep = 5 // how far each tile behind peeks out
 )
 
-// tabStrip draws the tabs, in a track.
+// tabStrip draws the tabs, in a track. The track is part of the title
+// bar: what of it no tab covers drags the window, and a double click on it
+// zooms the window. Tabs shrink to leave some of it free.
 func (a *App) tabStrip(c *ui.Context, k *colors) {
 	track := ui.Row(c).Grow(1).MinWidth(0).Height(tabH+4).Padding(2).Radius((tabH+4)/2).
-		Background(k.track).Border(0.5, k.trackBorder).AlignItems(ui.Center).ClipX().Role(ui.RoleTabList).Label("Tabs")
-	if track.DoubleClicked() {
-		a.newTab(a.currentDir())
-	}
+		Background(k.track).Border(0.5, k.trackBorder).AlignItems(ui.Center).ClipX().
+		DragWindow().Role(ui.RoleTabList).Label("Tabs")
 	track.Children(func() {
 		for i, t := range a.tabs {
 			if i > 0 {
@@ -35,8 +35,13 @@ func (a *App) tabStrip(c *ui.Context, k *colors) {
 			}
 			a.tabItem(c, k, i, t)
 		}
+		ui.Spacer(c).MinWidth(trackFree)
 	})
 }
+
+// trackFree is how much of the tab track tabs leave free, to drag the
+// window by.
+const trackFree = 56
 
 // tabItem draws a tab: the tiles of its panes' programs and its label.
 func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab) {
