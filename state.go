@@ -104,12 +104,21 @@ type App struct {
 	// view without a window, as in tests.
 	postMu sync.Mutex
 	posted []func()
+	// ctx is the context of the view, for the menus it builds.
+	ctx *ui.Context
 }
 
 func (a *App) post(fn func()) {
 	a.postMu.Lock()
 	a.posted = append(a.posted, fn)
 	a.postMu.Unlock()
+}
+
+// later changes the tree of tabs and panes once the frame building now
+// is built, as closing what it is building would pull it from under it.
+func (a *App) later(c *ui.Context, fn func()) {
+	a.post(fn)
+	c.Invalidate()
 }
 
 // runPosted makes the changes posted since the last frame.

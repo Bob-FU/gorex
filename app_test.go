@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -212,5 +213,53 @@ func TestLabels(t *testing.T) {
 	}
 	if d := shortDir("/private/tmp/a/b/c/d/e"); d != "…/d/e" {
 		t.Errorf("short dir %q", d)
+	}
+}
+
+// TestCloseButtons presses and releases the close buttons that show while
+// the pointer is over a tab or a pane, with a frame between: pressing one
+// must not hide it.
+func TestCloseButtons(t *testing.T) {
+	a, tt := newTestApp(t)
+	first := a.tabs[0]
+	a.newTab("/tmp")
+	tt.Frame()
+	track, ok := tt.Find("Tabs")
+	if !ok {
+		t.Fatal("no tab bar")
+	}
+	// The pointer over the first tab shows its close button.
+	tt.Move(track.X+40, track.Y+track.H/2)
+	tt.Frame()
+	x, ok := tt.Find("Close Tab")
+	if !ok {
+		t.Fatalf("no close button over the tab; texts %q", tt.Texts())
+	}
+	tt.Press(x.X+x.W/2, x.Y+x.H/2)
+	tt.Frame()
+	tt.Release(x.X+x.W/2, x.Y+x.H/2)
+	tt.Frame()
+	if len(a.tabs) != 1 || slices.Contains(a.tabs, first) {
+		t.Fatalf("%d tabs after clicking the first one's close button", len(a.tabs))
+	}
+
+	// A pane without the focus shows its buttons under the pointer.
+	a.split(false)
+	tt.Frame()
+	tab := a.tab()
+	left := tab.panes()[0]
+	if tab.Focus == left {
+		t.Fatal("the left pane has the focus")
+	}
+	b := left.bounds
+	tt.Move(b.X+60, b.Y+headerH/2)
+	tt.Frame()
+	cx, cy := b.X+b.W-8-13, b.Y+headerH/2 // the last button of the header
+	tt.Press(cx, cy)
+	tt.Frame()
+	tt.Release(cx, cy)
+	tt.Frame()
+	if ps := tab.panes(); len(ps) != 1 || ps[0] == left {
+		t.Fatalf("%d panes after clicking the left pane's close button", len(ps))
 	}
 }

@@ -32,8 +32,9 @@ func (a *App) tabStrip(c *ui.Context, k *colors) {
 	track := ui.Row(c).Basis(total).Shrink(1).MinWidth(0).Height(tabH+4).Padding(2).Radius((tabH+4)/2).
 		Background(k.track).Border(0.5, k.trackBorder).AlignItems(ui.Center).ClipX().
 		DragWindow().Role(ui.RoleTabList).Label("Tabs")
+	tabs := slices.Clone(a.tabs)
 	track.Children(func() {
-		for i, t := range a.tabs {
+		for i, t := range tabs {
 			if i > 0 {
 				sep := ui.Box(c).Size(1, 16).Shrink(0)
 				if i != a.active && i-1 != a.active {
@@ -98,7 +99,11 @@ func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab, width float32) {
 		a.startRename()
 	}
 	e.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, t) })
-	hovered := e.Hovered()
+	// Hovered is false while the pointer presses another element, as the
+	// close button: whether the pointer is over the tab keeps the button
+	// there until it is released, and clicked.
+	_, _, over := e.PointerPosition()
+	hovered := e.Hovered() || over
 	e.Children(func() {
 		a.tiles(c, k, t)
 		if a.renaming == t {
@@ -116,7 +121,7 @@ func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab, width float32) {
 		if hovered && len(a.tabs) > 1 {
 			x := iconButton(c, k, "x", "Close Tab", 18, 12).Tooltip("Close Tab")
 			if x.Clicked() {
-				a.closeTab(t)
+				a.later(c, func() { a.closeTab(t) })
 			}
 		} else if t.attention() {
 			ui.Box(c).Size(7, 7).Radius(4).Background(k.attention).Margin(0, 5, 0, 0)
@@ -203,14 +208,16 @@ func (a *App) tabMenu(m *ui.Menu, t *Tab) {
 		a.newTab(a.currentDir())
 	}
 	if m.Item("Close Tab").Chosen() {
-		a.closeTab(t)
+		a.later(a.ctx, func() { a.closeTab(t) })
 	}
 	if m.Item("Close Other Tabs").Disabled(len(a.tabs) < 2).Chosen() {
-		for _, o := range slices.Clone(a.tabs) {
-			if o != t {
-				a.closeTab(o)
+		a.later(a.ctx, func() {
+			for _, o := range slices.Clone(a.tabs) {
+				if o != t {
+					a.closeTab(o)
+				}
 			}
-		}
+		})
 	}
 }
 

@@ -17,6 +17,7 @@ const (
 )
 
 func (a *App) view(c *ui.Context) {
+	a.ctx = c
 	a.runPosted()
 	k := colorsOf(c)
 	a.focusedWin = a.win == nil || a.win.IsFocused()
@@ -115,8 +116,11 @@ func (a *App) node(c *ui.Context, k *colors, t *Tab, n *Node) *ui.Element {
 	}
 	box.Key(n.ID).MinWidth(0).MinHeight(0).AlignItems(ui.Stretch)
 	bounds := box.Bounds()
+	// The tree may change as its panes build, as a split: build the
+	// children it has now.
+	first, second, ratio := n.A, n.B, n.Ratio
 	box.Children(func() {
-		a.node(c, k, t, n.A).Grow(n.Ratio).Basis(0).MinWidth(0).MinHeight(0)
+		a.node(c, k, t, first).Grow(ratio).Basis(0).MinWidth(0).MinHeight(0)
 		div := ui.Box(c).Key("divider").Role(ui.RoleSplitter).Label("Divider")
 		if n.Vertical {
 			div.Height(gap).Cursor(ui.CursorResizeRow)
@@ -147,7 +151,7 @@ func (a *App) node(c *ui.Context, k *colors, t *Tab, n *Node) *ui.Element {
 				}
 			})
 		}
-		a.node(c, k, t, n.B).Grow(1 - n.Ratio).Basis(0).MinWidth(0).MinHeight(0)
+		a.node(c, k, t, second).Grow(1 - ratio).Basis(0).MinWidth(0).MinHeight(0)
 	})
 	return box
 }
@@ -164,7 +168,9 @@ func (a *App) paneCard(c *ui.Context, k *colors, t *Tab, p *Pane) *ui.Element {
 		Shadow(0, 1, 2, 0, shadow).
 		Shadow(0, 6, 22, -2, shadow)
 	card.Transition(ui.ElementTransition{Colors: true, Duration: 160 * time.Millisecond})
-	hovered := card.Hovered()
+	// As for tabs, the header's buttons stay while one is pressed.
+	_, _, over := card.PointerPosition()
+	hovered := card.Hovered() || over
 	card.Children(func() {
 		a.paneHeader(c, k, t, p, focused, hovered)
 		body := ui.Box(c).Grow(1).MinHeight(0).Padding(0, 5, 6, 5)
@@ -242,7 +248,7 @@ func (a *App) paneHeader(c *ui.Context, k *colors, t *Tab, p *Pane, focused, hov
 				a.toggleZoom()
 			}
 			if iconButton(c, k, "x", "Close Pane", 26, 17).Tooltip("Close Pane  ⌘W").Clicked() {
-				a.closePane(p)
+				a.later(c, func() { a.closePane(p) })
 			}
 		})
 	})
