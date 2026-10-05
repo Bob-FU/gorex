@@ -168,9 +168,7 @@ func (a *App) paneCard(c *ui.Context, k *colors, t *Tab, p *Pane) *ui.Element {
 		Shadow(0, 1, 2, 0, shadow).
 		Shadow(0, 6, 22, -2, shadow)
 	card.Transition(ui.ElementTransition{Colors: true, Duration: 160 * time.Millisecond})
-	// As for tabs, the header's buttons stay while one is pressed.
-	_, _, over := card.PointerPosition()
-	hovered := card.Hovered() || over
+	hovered := card.Hovered()
 	card.Children(func() {
 		a.paneHeader(c, k, t, p, focused, hovered)
 		body := ui.Box(c).Grow(1).MinHeight(0).Padding(0, 5, 6, 5)

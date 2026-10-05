@@ -99,11 +99,9 @@ func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab, width float32) {
 		a.startRename()
 	}
 	e.ContextMenu(func(m *ui.Menu) { a.tabMenu(m, t) })
-	// Hovered is false while the pointer presses another element, as the
-	// close button: whether the pointer is over the tab keeps the button
-	// there until it is released, and clicked.
-	_, _, over := e.PointerPosition()
-	hovered := e.Hovered() || over
+	// The tab stays hovered while its close button is pressed, which it
+	// shows then.
+	hovered := e.Hovered()
 	e.Children(func() {
 		a.tiles(c, k, t)
 		if a.renaming == t {
