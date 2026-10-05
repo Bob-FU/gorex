@@ -13,16 +13,23 @@ import (
 const (
 	tabH     = 28
 	tabMaxW  = 214
+	tabMinW  = 120
 	tileW    = 21
 	tileH    = 16
 	tileStep = 5 // how far each tile behind peeks out
 )
 
-// tabStrip draws the tabs, in a track. The track is part of the title
-// bar: what of it no tab covers drags the window, and a double click on it
-// zooms the window. Tabs shrink to leave some of it free.
+// tabStrip draws the tabs, in a track as wide as they are, which shrinks
+// with them when the title bar has no room for them all. The track is part
+// of the title bar: its edges and the gaps between tabs drag the window.
 func (a *App) tabStrip(c *ui.Context, k *colors) {
-	track := ui.Row(c).Grow(1).MinWidth(0).Height(tabH+4).Padding(2).Radius((tabH+4)/2).
+	widths := make([]float32, len(a.tabs))
+	total := float32(4 + max(len(a.tabs)-1, 0)) // the padding and separators
+	for i, t := range a.tabs {
+		widths[i] = tabWidth(c, t)
+		total += widths[i]
+	}
+	track := ui.Row(c).Basis(total).Shrink(1).MinWidth(0).Height(tabH+4).Padding(2).Radius((tabH+4)/2).
 		Background(k.track).Border(0.5, k.trackBorder).AlignItems(ui.Center).ClipX().
 		DragWindow().Role(ui.RoleTabList).Label("Tabs")
 	track.Children(func() {
@@ -33,20 +40,37 @@ func (a *App) tabStrip(c *ui.Context, k *colors) {
 					sep.Background(k.tabSep)
 				}
 			}
-			a.tabItem(c, k, i, t)
+			a.tabItem(c, k, i, t, widths[i])
 		}
-		ui.Spacer(c).MinWidth(trackFree)
 	})
 }
 
-// trackFree is how much of the tab track tabs leave free, to drag the
-// window by.
-const trackFree = 56
+// tabWidth returns the width a tab takes when the title bar has room: its
+// tiles and its label, the label faded out past tabMaxW, and room for its
+// close button or its dot.
+func tabWidth(c *ui.Context, t *Tab) float32 {
+	name, detail := t.label()
+	w, _ := c.MeasureText(0, tabLabel(name, detail, ui.Color{}, ui.Color{})...)
+	tiles := float32(tileW + tileStep*min(len(t.panes())-1, 2) + 2)
+	return min(max(6+tiles+9+w+9+18+10, tabMinW), tabMaxW)
+}
+
+// tabLabel is the label of a tab: the name and, fainter, the detail.
+func tabLabel(name, detail string, nameColor, detailColor ui.Color) []ui.Span {
+	return []ui.Span{
+		{Text: name, Size: 13.5, Weight: 500, Color: nameColor},
+		{Text: " " + detail, Size: 13.5, Weight: 400, Color: detailColor},
+	}
+}
+
+// titleFree is how much of the title bar the tabs leave free, after
+// them, to drag the window by.
+const titleFree = 56
 
 // tabItem draws a tab: the tiles of its panes' programs and its label.
-func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab) {
+func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab, width float32) {
 	active := i == a.active
-	e := ui.Row(c).Key(t.ID).Height(tabH).Basis(tabMaxW).Shrink(1).MinWidth(64).MaxWidth(tabMaxW).
+	e := ui.Row(c).Key(t.ID).Height(tabH).Basis(width).Shrink(1).MinWidth(64).
 		Padding(0, 10, 0, 6).Gap(9).AlignItems(ui.Center).Radius(tabH / 2).Role(ui.RoleTab).Selected(active)
 	name, detail := t.label()
 	e.Label(name + " " + detail)
@@ -87,10 +111,7 @@ func (a *App) tabItem(c *ui.Context, k *colors, i int, t *Tab) {
 		}
 		label := ui.Box(c).Grow(1).MinWidth(0).Height(18)
 		label.Draw(func(p *ui.Painter, r ui.Rect) {
-			fadeText(p, r, []ui.Span{
-				{Text: name, Size: 13.5, Weight: 500, Color: nameColor},
-				{Text: " " + detail, Size: 13.5, Weight: 400, Color: detailColor},
-			})
+			fadeText(p, r, tabLabel(name, detail, nameColor, detailColor))
 		})
 		if hovered && len(a.tabs) > 1 {
 			x := iconButton(c, k, "x", "Close Tab", 18, 12).Tooltip("Close Tab")
