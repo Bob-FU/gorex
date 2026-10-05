@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ func (a *App) debugHook() {
 	if dir == "" {
 		return
 	}
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	go func() {
 		for range time.Tick(150 * time.Millisecond) {
 			req := filepath.Join(dir, "do")
@@ -88,6 +90,14 @@ func (a *App) debug(dir, line string) {
 			})
 		case "close":
 			win.Close()
+		case "zoom":
+			win.Update(func() {
+				if win.IsMaximized() {
+					win.Unmaximize()
+				} else {
+					win.Maximize()
+				}
+			})
 		}
 	}
 }

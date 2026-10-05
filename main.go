@@ -9,7 +9,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"log"
 	"os"
 	"runtime"
@@ -22,9 +21,9 @@ import (
 )
 
 func main() {
-	server := flag.Bool("server", false, "run the session server")
-	flag.Parse()
-	if *server {
+	// -server runs the session server; other arguments are AppKit's, as
+	// -NSWindowResizeTime, which it reads itself.
+	if len(os.Args) > 1 && os.Args[1] == "-server" {
 		log.SetPrefix("[server] ")
 		if err := rex.Serve(); err != nil {
 			log.Fatal(err)
