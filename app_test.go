@@ -1,0 +1,216 @@
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+
+	"gorex/internal/rex"
+)
+
+// newTestApp starts a session server of its own and an app on it, whose
+// view runs without a window.
+func newTestApp(t *testing.T) (*App, *ui.Tester) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "gorex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOREX_DIR", dir)
+	t.Setenv("SHELL", "/bin/sh")
+	go rex.Serve()
+	var client *rex.Client
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(rex.SocketPath()); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	client, err = rex.Connect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		client.Shutdown()
+		time.Sleep(100 * time.Millisecond)
+		os.RemoveAll(dir)
+	})
+	registerFonts()
+	a := &App{client: client}
+	a.newTab("/tmp")
+	tt := ui.NewTester(a.view, 1000, 620)
+	return a, tt
+}
+
+// refresh asks the server what runs in the sessions, as the window does
+// every half second.
+func refresh(a *App) {
+	infos, _ := a.client.List()
+	byID := map[string]rex.SessionInfo{}
+	for _, in := range infos {
+		byID[in.ID] = in
+	}
+	a.apply(byID)
+}
+
+// waitFor runs frames until cond holds, or fails after a few seconds.
+func waitFor(t *testing.T, tt *ui.Tester, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s; texts %q", what, tt.Texts())
+		}
+		time.Sleep(20 * time.Millisecond)
+		tt.Frame()
+	}
+}
+
+func TestPanesAndTabs(t *testing.T) {
+	a, tt := newTestApp(t)
+	tab := a.tab()
+	p := tab.Focus
+	waitFor(t, tt, "the shell", func() bool { return p.term != nil && strings.Contains(p.term.Text(), "$") })
+
+	// The command palette splits the pane.
+	a.openPalette()
+	tt.Frame()
+	tt.Type("split right")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if n := len(tab.panes()); n != 2 {
+		t.Fatalf("%d panes after Split Right", n)
+	}
+	if a.paletteOpen {
+		t.Error("the palette stays open")
+	}
+	right := tab.Focus
+	if right == p {
+		t.Fatal("the new pane does not have the focus")
+	}
+
+	// The header's buttons split down and zoom.
+	if err := tt.Click("Split Down"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(tab.panes()); n != 3 || !tab.Root.B.Vertical {
+		t.Fatalf("%d panes after Split Down", n)
+	}
+	if err := tt.Click("Zoom"); err != nil {
+		t.Fatal(err)
+	}
+	if tab.Zoom == nil {
+		t.Fatal("not zoomed")
+	}
+	a.toggleZoom()
+
+	// Focus moves between panes by where they are.
+	tt.Frame()
+	a.moveFocus(-1, 0)
+	if tab.Focus != p {
+		t.Errorf("focus left went to pane %d, not %d", tab.Focus.ID, p.ID)
+	}
+	a.moveFocus(1, 0)
+	if tab.Focus == p {
+		t.Error("focus right stayed")
+	}
+
+	// Typing reaches the shell, and the header follows its directory.
+	a.focusReq = p
+	tab.setFocus(p)
+	tt.Frame()
+	tt.Type("cd /usr/bin && sleep 3")
+	tt.Key(0, ui.KeyEnter)
+	waitFor(t, tt, "sleep in the header", func() bool {
+		refresh(a)
+		name, detail := p.label()
+		return name == "sleep" && detail == "/usr/bin"
+	})
+
+	// A second tab, renamed, then closed with its pane.
+	a.newTab("/tmp")
+	if len(a.tabs) != 2 || a.active != 1 {
+		t.Fatalf("%d tabs, active %d", len(a.tabs), a.active)
+	}
+	a.startRename()
+	tt.Frame()
+	tt.Type("logs")
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+	if a.tabs[1].Name != "logs" {
+		t.Errorf("tab named %q", a.tabs[1].Name)
+	}
+	a.closeFocused()
+	if len(a.tabs) != 1 || a.active != 0 {
+		t.Fatalf("%d tabs, active %d, after closing the last pane of a tab", len(a.tabs), a.active)
+	}
+
+	// A shell that exits closes its pane.
+	a.selectTab(0)
+	tab.setFocus(right)
+	right.term.Send([]byte("exit\r"))
+	waitFor(t, tt, "the pane to close", func() bool { return len(tab.panes()) == 2 })
+}
+
+func TestRestore(t *testing.T) {
+	a, tt := newTestApp(t)
+	a.split(false)
+	a.tab().Root.Ratio = 0.3
+	a.newTab("/usr")
+	a.tabs[1].Name = "second"
+	tt.Frame()
+	a.saveNow()
+	sids := map[string]bool{}
+	for _, tab := range a.tabs {
+		for _, p := range tab.panes() {
+			sids[p.SID] = true
+			p.term.Close() // detach, as when the app quits
+		}
+	}
+	// Another app, as the next launch, finds them all.
+	b := &App{client: a.client}
+	if !b.restore() {
+		t.Fatal("nothing restored")
+	}
+	if len(b.tabs) != 2 || b.tabs[1].Name != "second" || b.active != 1 {
+		t.Fatalf("restored %d tabs, active %d", len(b.tabs), b.active)
+	}
+	if r := b.tabs[0].Root; r.Pane != nil || r.Ratio != 0.3 {
+		t.Errorf("first tab's root %+v", r)
+	}
+	for _, tab := range b.tabs {
+		for _, p := range tab.panes() {
+			if !sids[p.SID] || p.restored {
+				t.Errorf("pane of session %q not attached again", p.SID)
+			}
+		}
+	}
+}
+
+func TestLabels(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	p := &Pane{info: rex.SessionInfo{Shell: "zsh", Program: "zsh", Idle: true, Dir: home + "/Sites/rex-snake"}}
+	if n, d := p.label(); n != "zsh" || d != "~/Sites/rex-snake" {
+		t.Errorf("shell label %q %q", n, d)
+	}
+	p.info = rex.SessionInfo{Shell: "fish", Program: "lazygit", Dir: home + "/Sites/rex-snake"}
+	p.title = "lazygit ~/Sites/rex-snake"
+	if n, d := p.label(); n != "Git Changes" || d != "~/Sites/rex-snake" {
+		t.Errorf("lazygit label %q %q", n, d)
+	}
+	p.info.Program = "codex"
+	p.title = "Stress-test Snake demo | rex-snake"
+	if n, d := p.label(); n != p.title || d != "" {
+		t.Errorf("codex label %q %q", n, d)
+	}
+	p.info, p.title = rex.SessionInfo{Shell: "zsh", Program: "ssh", Args: []string{"ssh", "-p", "22", "box.local"}}, ""
+	if n, d := p.label(); n != "SSH" || d != "box.local" {
+		t.Errorf("ssh label %q %q", n, d)
+	}
+	if d := shortDir("/private/tmp/a/b/c/d/e"); d != "…/d/e" {
+		t.Errorf("short dir %q", d)
+	}
+}

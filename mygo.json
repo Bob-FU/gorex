@@ -1,0 +1,8 @@
+{
+  "name": "GoRex",
+  "identifier": "dev.gorex.app",
+  "version": "0.1.0",
+  "copyright": "A replica of Superlogical's Rex, built with MyGo",
+  "out": "build",
+  "macos": { "minimumSystemVersion": "13.0" }
+}
