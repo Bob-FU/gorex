@@ -162,6 +162,7 @@ func TestRestore(t *testing.T) {
 	a.tab().Root.Ratio = 0.3
 	a.newTab("/usr")
 	a.tabs[1].Name = "second"
+	a.tabs[1].Focus.Name = "Codex"
 	tt.Frame()
 	a.saveNow()
 	sids := map[string]bool{}
@@ -178,6 +179,14 @@ func TestRestore(t *testing.T) {
 	}
 	if len(b.tabs) != 2 || b.tabs[1].Name != "second" || b.active != 1 {
 		t.Fatalf("restored %d tabs, active %d", len(b.tabs), b.active)
+	}
+	for i, tab := range b.tabs {
+		if tab.UID == "" || tab.UID != a.tabs[i].UID {
+			t.Errorf("tab %d's ID %q, not %q", i, tab.UID, a.tabs[i].UID)
+		}
+	}
+	if n := b.tabs[1].Focus.Name; n != "Codex" {
+		t.Errorf("pane named %q", n)
 	}
 	if r := b.tabs[0].Root; r.Pane != nil || r.Ratio != 0.3 {
 		t.Errorf("first tab's root %+v", r)

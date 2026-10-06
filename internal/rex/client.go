@@ -23,6 +23,25 @@ type Client struct {
 	pending map[int64]chan Response
 	err     error
 	closed  chan struct{}
+	// onEvent is called with what the server asks of the app's window,
+	// once it subscribed, from the reading goroutine.
+	onEvent func(Event)
+}
+
+// Dial connects to the server at the socket path, and fails when none
+// runs there, as the command line does.
+func Dial(path string) (*Client, error) {
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(conn), nil
+}
+
+func newClient(conn net.Conn) *Client {
+	c := &Client{conn: conn, pending: map[int64]chan Response{}, closed: make(chan struct{})}
+	go c.read()
+	return c
 }
 
 // Connect connects to the server, starting one in the background when
@@ -45,9 +64,7 @@ func Connect() (*Client, error) {
 			}
 		}
 	}
-	c := &Client{conn: conn, pending: map[int64]chan Response{}, closed: make(chan struct{})}
-	go c.read()
-	return c, nil
+	return newClient(conn), nil
 }
 
 // Executable returns the path of the running executable and when it was
@@ -99,6 +116,15 @@ func (c *Client) read() {
 		}
 		var res Response
 		if json.Unmarshal(line, &res) != nil {
+			continue
+		}
+		if res.Event != nil {
+			c.mu.Lock()
+			fn := c.onEvent
+			c.mu.Unlock()
+			if fn != nil {
+				fn(*res.Event)
+			}
 			continue
 		}
 		c.mu.Lock()
@@ -177,6 +203,58 @@ func (c *Client) Layout() (json.RawMessage, error) {
 
 func (c *Client) SetLayout(l json.RawMessage) error {
 	return c.call(Request{Op: "setLayout", Layout: l}, nil)
+}
+
+// Subscribe makes this connection the app's window's: fn is called, from
+// the reading goroutine, with what command lines ask of the window, which
+// it answers with Answer.
+func (c *Client) Subscribe(fn func(Event)) error {
+	c.mu.Lock()
+	c.onEvent = fn
+	c.mu.Unlock()
+	return c.call(Request{Op: "subscribe"}, nil)
+}
+
+// Answer answers the event seq with data, or err.
+func (c *Client) Answer(seq int64, data any, err error) error {
+	a := &Answer{Seq: seq}
+	if err != nil {
+		a.Error = err.Error()
+	} else if data != nil {
+		b, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		a.Data = b
+	}
+	return c.call(Request{Op: "answer", Answer: a}, nil)
+}
+
+// Send types text into the session sid.
+func (c *Client) Send(sid, text string) error {
+	return c.call(Request{Op: "send", SID: sid, Text: text}, nil)
+}
+
+// ReadScreen returns the text of the session's screen, or with scrollback
+// its last lines lines (all of them when lines is 0).
+func (c *Client) ReadScreen(sid string, scrollback bool, lines int) (string, error) {
+	var out struct {
+		Text string `json:"text"`
+	}
+	err := c.call(Request{Op: "read", SID: sid, Scrollback: scrollback, Lines: lines}, &out)
+	return out.Text, err
+}
+
+// Split asks the window to split the pane of the session sid, and
+// returns the new pane's session.
+func (c *Client) Split(sid string, o SplitOptions) (s SessionInfo, err error) {
+	err = c.call(Request{Op: "split", SID: sid, Split: &o}, &s)
+	return
+}
+
+// Rename asks the window to name the pane of the session sid, or its tab.
+func (c *Client) Rename(sid string, o RenameOptions) error {
+	return c.call(Request{Op: "rename", SID: sid, Rename: &o}, nil)
 }
 
 func (c *Client) Shutdown() error { return c.call(Request{Op: "shutdown"}, nil) }

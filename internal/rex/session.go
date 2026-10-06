@@ -22,10 +22,11 @@ const scrollback = 8 << 20
 
 // session is a pseudo-terminal of the server and its shell.
 type session struct {
-	id      string
-	shell   string
-	created time.Time
-	p       *pty
+	id        string
+	workspace string
+	shell     string
+	created   time.Time
+	p         *pty
 
 	mu sync.Mutex
 	// vt is the session's screen, kept by the terminal emulator of the
@@ -88,13 +89,13 @@ func newSession(id string, o CreateOptions) (*session, error) {
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
-	env := sessionEnv(id, o.Env)
+	env := sessionEnv(id, o.Workspace, o.Env)
 	p, err := startPTY(path, argv, dir, env, cols, rows)
 	if err != nil {
 		return nil, err
 	}
 	s := &session{
-		id: id, shell: name, created: time.Now(), p: p,
+		id: id, workspace: o.Workspace, shell: name, created: time.Now(), p: p,
 		clients: map[*attached]struct{}{},
 		cols:    cols, rows: rows, done: make(chan struct{}),
 	}
@@ -138,8 +139,11 @@ func newSession(id string, o CreateOptions) (*session, error) {
 }
 
 // sessionEnv returns the environment of a session's shell: the server's,
-// without what other terminals set, and what terminal apps set.
-func sessionEnv(id string, extra []string) []string {
+// without what other terminals set, and what terminal apps set. The
+// shell finds its session and tab in GOREX_SURFACE_ID and
+// GOREX_WORKSPACE_ID, the server in GOREX_SOCKET, and the command line
+// that drives the window, gorex, at the end of PATH.
+func sessionEnv(id, workspace string, extra []string) []string {
 	var env []string
 	hasLang := false
 	for _, kv := range os.Environ() {
@@ -150,10 +154,12 @@ func sessionEnv(id string, extra []string) []string {
 			k == "COLUMNS", k == "LINES", k == "SHLVL", k == "OLDPWD", k == "PWD", k == "_",
 			strings.HasPrefix(k, "ITERM_"), strings.HasPrefix(k, "GHOSTTY_"), strings.HasPrefix(k, "KITTY_"),
 			strings.HasPrefix(k, "VSCODE_"), strings.HasPrefix(k, "WEZTERM_"), strings.HasPrefix(k, "ALACRITTY_"),
-			strings.HasPrefix(k, "GOREX_"), strings.HasPrefix(k, "MYGO_"):
+			strings.HasPrefix(k, "GOREX_"), strings.HasPrefix(k, "MYGO_"), strings.HasPrefix(k, "CMUX_"):
 			continue
 		case k == "LANG" || k == "LC_ALL" || k == "LC_CTYPE":
 			hasLang = true
+		case k == "PATH":
+			kv += string(os.PathListSeparator) + BinDir()
 		}
 		env = append(env, kv)
 	}
@@ -163,6 +169,9 @@ func sessionEnv(id string, extra []string) []string {
 		"TERM_PROGRAM=GoRex",
 		"TERM_PROGRAM_VERSION=0.1.0",
 		"GOREX_SESSION="+id,
+		"GOREX_SURFACE_ID="+id,
+		"GOREX_WORKSPACE_ID="+workspace,
+		"GOREX_SOCKET="+SocketPath(),
 	)
 	if !hasLang {
 		env = append(env, "LANG=en_US.UTF-8")
@@ -242,7 +251,8 @@ func (s *session) attach(conn net.Conn, cols, rows int) {
 	s.mu.Unlock()
 }
 
-func (s *session) input(p []byte) {
+// input types p, unless the session exited, and reports whether it did.
+func (s *session) input(p []byte) bool {
 	s.mu.Lock()
 	s.lastInput = time.Now()
 	exited := s.exited
@@ -250,6 +260,7 @@ func (s *session) input(p []byte) {
 	if !exited {
 		s.p.master.Write(p)
 	}
+	return !exited
 }
 
 // resize sets the size of the terminal and reports whether it changed.
@@ -305,6 +316,30 @@ func (s *session) resyncScreen() {
 	}
 }
 
+// text returns the text of the session's screen, or with scrollback the
+// last lines lines of its scrollback and screen, all of them when lines
+// is 0. Lines a program's long output wrapped are joined.
+func (s *session) text(scrollback bool, lines int) string {
+	s.mu.Lock()
+	all := s.vt.Text()
+	rows := s.rows
+	s.mu.Unlock()
+	ls := strings.Split(strings.TrimRight(all, "\n"), "\n")
+	if !scrollback {
+		lines = rows
+	}
+	if lines > 0 && len(ls) > lines {
+		ls = ls[len(ls)-lines:]
+	}
+	for i, l := range ls {
+		ls[i] = strings.TrimRight(l, " ")
+	}
+	for len(ls) > 0 && ls[len(ls)-1] == "" {
+		ls = ls[:len(ls)-1]
+	}
+	return strings.Join(ls, "\n")
+}
+
 // kill hangs up the session and waits a little for it to end.
 func (s *session) kill() {
 	s.mu.Lock()
@@ -326,7 +361,7 @@ func (s *session) kill() {
 func (s *session) info() SessionInfo {
 	s.mu.Lock()
 	in := SessionInfo{
-		ID: s.id, Shell: s.shell, Created: s.created,
+		ID: s.id, Workspace: s.workspace, Shell: s.shell, Created: s.created,
 		Title: s.vt.Title(), LastOutput: s.lastOutput, LastInput: s.lastInput,
 		Output: s.output, Bells: int(s.bells.Load()), Exited: s.exited, ExitCode: s.code,
 		Attached: len(s.clients), Cols: s.cols, Rows: s.rows,

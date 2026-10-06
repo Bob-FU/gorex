@@ -19,7 +19,10 @@ import (
 
 // Tab is a tab of the window: panes in a tree of splits.
 type Tab struct {
-	ID   int
+	ID int
+	// UID names the tab to the command line, as GOREX_WORKSPACE_ID in
+	// its shells; it outlives the app, in the layout.
+	UID  string
 	Name string // the name the user gave it, "" to follow its panes
 	Root *Node
 	// Focus is the pane with the focus, and Zoom the pane that fills the
@@ -45,8 +48,11 @@ type Node struct {
 
 // Pane is a terminal attached to a session of the server.
 type Pane struct {
-	ID     int
-	SID    string
+	ID  int
+	SID string
+	// Name is the name the command line gave the pane, "" to follow its
+	// program.
+	Name   string
 	Tab    *Tab
 	Node   *Node
 	term   *terminal.Terminal
@@ -169,18 +175,18 @@ func (t *Tab) setFocus(p *Pane) {
 	t.recent = append(t.recent, p)
 }
 
-// newPane makes a pane with a new session in dir.
-func (a *App) newPane(dir string, cols, rows int) *Pane {
+// newPane makes a pane of the tab t with a new session in dir.
+func (a *App) newPane(t *Tab, dir string, cols, rows int) *Pane {
 	if cols <= 0 {
 		cols, rows = 80, 24
 	}
-	info, err := a.client.Create(rex.CreateOptions{Dir: dir, Cols: cols, Rows: rows})
+	info, err := a.client.Create(rex.CreateOptions{Dir: dir, Cols: cols, Rows: rows, Workspace: t.UID})
 	if err != nil {
 		log.Printf("creating a session: %v", err)
 		a.err = err.Error()
 		info = rex.SessionInfo{ID: "", Exited: true}
 	}
-	p := &Pane{ID: a.id(), SID: info.ID, info: info, startDir: dir}
+	p := &Pane{ID: a.id(), SID: info.ID, Tab: t, info: info, startDir: dir}
 	if p.info.Dir == "" {
 		p.info.Dir = dir
 	}
@@ -262,8 +268,8 @@ func (a *App) ring(p *Pane) {
 
 // newTab opens a tab with a shell in dir, after the active tab.
 func (a *App) newTab(dir string) *Tab {
-	t := &Tab{ID: a.id()}
-	p := a.newPane(dir, 0, 0)
+	t := &Tab{ID: a.id(), UID: rex.NewID()}
+	p := a.newPane(t, dir, 0, 0)
 	t.Root = &Node{ID: a.id(), Pane: p}
 	p.Tab, p.Node = t, t.Root
 	t.setFocus(p)
@@ -292,7 +298,19 @@ func (a *App) split(vertical bool) {
 	if t == nil || t.Focus == nil {
 		return
 	}
-	old := t.Focus
+	dir := "right"
+	if vertical {
+		dir = "down"
+	}
+	a.splitPane(t.Focus, dir, true)
+}
+
+// splitPane splits a pane, the new pane in the direction dir of it:
+// right, down, left or up. focus gives the new pane the focus.
+func (a *App) splitPane(old *Pane, dir string, focus bool) *Pane {
+	t := old.Tab
+	vertical := dir == "down" || dir == "up"
+	before := dir == "left" || dir == "up"
 	t.Zoom = nil
 	n := old.Node
 	cols, rows := 80, 24
@@ -304,15 +322,29 @@ func (a *App) split(vertical bool) {
 			cols = max(cols/2, 10)
 		}
 	}
-	p := a.newPane(a.currentDir(), cols, rows)
-	p.Tab = t
-	left := &Node{ID: a.id(), Pane: old, Parent: n}
-	right := &Node{ID: a.id(), Pane: p, Parent: n}
-	old.Node, p.Node = left, right
-	n.Pane, n.A, n.B, n.Vertical, n.Ratio = nil, left, right, vertical, 0.5
-	t.setFocus(p)
-	a.focusReq = p
+	wd := old.info.Dir
+	if wd == "" {
+		wd = a.currentDir()
+	}
+	p := a.newPane(t, wd, cols, rows)
+	first := &Node{ID: a.id(), Pane: old, Parent: n}
+	second := &Node{ID: a.id(), Pane: p, Parent: n}
+	old.Node, p.Node = first, second
+	if before {
+		first, second = second, first
+	}
+	n.Pane, n.A, n.B, n.Vertical, n.Ratio = nil, first, second, vertical, 0.5
+	if focus {
+		t.setFocus(p)
+		if a.tab() == t {
+			a.focusReq = p
+		}
+	} else {
+		// The new pane comes before the others when the focus goes back.
+		t.recent = slices.Insert(t.recent, 0, p)
+	}
 	a.changed()
+	return p
 }
 
 // closePane closes a pane and ends its session.
@@ -546,6 +578,9 @@ func (p *Pane) label() (name, detail string) {
 	in := p.info
 	prog := programOf(in.Program)
 	dir := shortDir(in.Dir)
+	if p.Name != "" {
+		return p.Name, dir
+	}
 	if in.Program == "" {
 		return in.Shell, shortDir(p.startDir)
 	}
@@ -637,6 +672,7 @@ type savedLayout struct {
 }
 
 type savedTab struct {
+	UID   string     `json:"uid,omitempty"`
 	Name  string     `json:"name,omitempty"`
 	Root  *savedNode `json:"root"`
 	Focus int        `json:"focus"`
@@ -645,6 +681,7 @@ type savedTab struct {
 
 type savedNode struct {
 	SID      string     `json:"sid,omitempty"`
+	Name     string     `json:"name,omitempty"`
 	Dir      string     `json:"dir,omitempty"`
 	Cols     int        `json:"cols,omitempty"`
 	Rows     int        `json:"rows,omitempty"`
@@ -659,7 +696,7 @@ func (a *App) snapshot() savedLayout {
 	var save func(n *Node) *savedNode
 	save = func(n *Node) *savedNode {
 		if p := n.Pane; p != nil {
-			s := &savedNode{SID: p.SID, Dir: p.info.Dir}
+			s := &savedNode{SID: p.SID, Name: p.Name, Dir: p.info.Dir}
 			if s.Dir == "" {
 				s.Dir = p.startDir
 			}
@@ -671,7 +708,7 @@ func (a *App) snapshot() savedLayout {
 		return &savedNode{Vertical: n.Vertical, Ratio: n.Ratio, A: save(n.A), B: save(n.B)}
 	}
 	for _, t := range a.tabs {
-		st := savedTab{Name: t.Name, Root: save(t.Root), Zoom: t.Zoom != nil}
+		st := savedTab{UID: t.UID, Name: t.Name, Root: save(t.Root), Zoom: t.Zoom != nil}
 		st.Focus = max(slices.Index(t.panes(), t.Focus), 0)
 		l.Tabs = append(l.Tabs, st)
 	}
@@ -716,7 +753,7 @@ func (a *App) restore() bool {
 			}
 		}
 	}
-	used := map[string]bool{}
+	used, uids := map[string]bool{}, map[string]bool{}
 	var load func(s *savedNode, t *Tab, parent *Node) *Node
 	load = func(s *savedNode, t *Tab, parent *Node) *Node {
 		n := &Node{ID: a.id(), Parent: parent}
@@ -731,10 +768,10 @@ func (a *App) restore() bool {
 				if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 					dir, _ = os.UserHomeDir()
 				}
-				p = a.newPane(dir, s.Cols, s.Rows)
+				p = a.newPane(t, dir, s.Cols, s.Rows)
 				p.restored = true
 			}
-			p.Tab, p.Node = t, n
+			p.Tab, p.Node, p.Name = t, n, s.Name
 			n.Pane = p
 			return n
 		}
@@ -746,7 +783,12 @@ func (a *App) restore() bool {
 		if st.Root == nil {
 			continue
 		}
-		t := &Tab{ID: a.id(), Name: st.Name}
+		uid := st.UID
+		if uid == "" || uids[uid] {
+			uid = rex.NewID()
+		}
+		uids[uid] = true
+		t := &Tab{ID: a.id(), UID: uid, Name: st.Name}
 		t.Root = load(st.Root, t, nil)
 		ps := t.panes()
 		for _, p := range ps {
@@ -764,7 +806,12 @@ func (a *App) restore() bool {
 		if used[in.ID] {
 			continue
 		}
-		t := &Tab{ID: a.id()}
+		uid := in.Workspace
+		if uid == "" || uids[uid] {
+			uid = rex.NewID()
+		}
+		uids[uid] = true
+		t := &Tab{ID: a.id(), UID: uid}
 		p := &Pane{ID: a.id(), SID: in.ID, info: in, startDir: in.Dir}
 		a.attach(p, in.Cols, in.Rows)
 		t.Root = &Node{ID: a.id(), Pane: p}

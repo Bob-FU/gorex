@@ -30,6 +30,11 @@ func main() {
 		}
 		return
 	}
+	// A command of the command line, as gorex new-split, drives the
+	// window from its shells.
+	if isCLICommand(os.Args[1:]) {
+		os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	// The state of the sessions lives in the app's data directory, which
 	// the server it starts takes from GOREX_DIR: "GoRex", or "GoRex Dev"
 	// under mygo dev, which keeps the installed app's sessions apart.
@@ -107,6 +112,9 @@ func (a *App) open() {
 		a.newTab(home)
 	}
 	a.changed()
+	if err := a.subscribe(win); err != nil {
+		log.Print(err)
+	}
 	go a.poll(win, client)
 	a.debugHook()
 	win.OnClosed(func() {

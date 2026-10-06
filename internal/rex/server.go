@@ -5,8 +5,6 @@ package rex
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +39,12 @@ type Server struct {
 	exeTime  time.Time
 	controls int
 	idleFrom time.Time
+	// ui is the control connection of the app's window that subscribed
+	// last, which answers what command lines ask of the window; asked
+	// are the events it is still to answer.
+	ui       *control
+	asked    map[int64]chan Answer
+	eventSeq int64
 	quit     chan struct{}
 	quitOnce sync.Once
 }
@@ -74,11 +78,13 @@ func Serve() error {
 	s := &Server{
 		sessions: map[string]*session{}, started: time.Now(), ln: ln,
 		hostDone: make(chan struct{}), idleFrom: time.Now(), quit: make(chan struct{}),
+		asked: map[int64]chan Answer{},
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "layout.json")); err == nil && json.Valid(b) {
 		s.layout = b
 	}
 	s.exe, s.exeTime = Executable()
+	linkCommand(s.exe)
 	go func() {
 		s.host = hostInfo()
 		close(s.hostDone)
@@ -167,8 +173,22 @@ func (s *Server) handle(conn net.Conn) {
 	s.control(conn, r, first)
 }
 
+// control is a control connection.
+type control struct {
+	conn net.Conn
+	wmu  sync.Mutex
+}
+
+func (c *control) send(res Response) {
+	b, _ := json.Marshal(res)
+	c.wmu.Lock()
+	c.conn.Write(append(b, '\n'))
+	c.wmu.Unlock()
+}
+
 // control serves a control connection: a request per line.
 func (s *Server) control(conn net.Conn, r *bufio.Reader, first []byte) {
+	cc := &control{conn: conn}
 	s.mu.Lock()
 	s.controls++
 	s.mu.Unlock()
@@ -176,25 +196,28 @@ func (s *Server) control(conn net.Conn, r *bufio.Reader, first []byte) {
 		s.mu.Lock()
 		s.controls--
 		s.idleFrom = time.Now()
+		if s.ui == cc {
+			s.ui = nil
+		}
 		s.mu.Unlock()
 		conn.Close()
 	}()
-	var wmu sync.Mutex
-	reply := func(res Response) {
-		b, _ := json.Marshal(res)
-		wmu.Lock()
-		conn.Write(append(b, '\n'))
-		wmu.Unlock()
-	}
 	line := first
 	for {
 		var req Request
 		if err := json.Unmarshal(line, &req); err == nil {
-			// Kills wait for the session to end: answer them aside.
-			if req.Op == "kill" {
-				go func() { reply(s.request(req)) }()
-			} else {
-				reply(s.request(req))
+			switch req.Op {
+			case "subscribe":
+				s.mu.Lock()
+				s.ui = cc
+				s.mu.Unlock()
+				cc.send(Response{ID: req.ID})
+			case "kill", "split", "rename":
+				// Kills wait for the session to end, and what the
+				// window is asked for its answer: answer them aside.
+				go func() { cc.send(s.request(req)) }()
+			default:
+				cc.send(s.request(req))
 			}
 		}
 		var err error
@@ -250,7 +273,7 @@ func (s *Server) do(req Request) (any, error) {
 		if req.Create != nil {
 			o = *req.Create
 		}
-		id := newID()
+		id := NewID()
 		ss, err := newSession(id, o)
 		if err != nil {
 			return nil, err
@@ -303,6 +326,38 @@ func (s *Server) do(req Request) (any, error) {
 			os.Rename(tmp, path)
 		}
 		return nil, nil
+	case "send":
+		ss, err := s.session(req.SID)
+		if err != nil {
+			return nil, err
+		}
+		if !ss.input([]byte(req.Text)) {
+			return nil, fmt.Errorf("session %q has exited", req.SID)
+		}
+		return nil, nil
+	case "read":
+		ss, err := s.session(req.SID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"text": ss.text(req.Scrollback, req.Lines)}, nil
+	case "split", "rename":
+		if _, err := s.session(req.SID); err != nil {
+			return nil, err
+		}
+		return s.ask(Event{Op: req.Op, SID: req.SID, Split: req.Split, Rename: req.Rename})
+	case "answer":
+		if req.Answer == nil {
+			return nil, errors.New("no answer")
+		}
+		s.mu.Lock()
+		ch := s.asked[req.Answer.Seq]
+		delete(s.asked, req.Answer.Seq)
+		s.mu.Unlock()
+		if ch != nil {
+			ch <- *req.Answer
+		}
+		return nil, nil
 	case "shutdown":
 		go func() {
 			time.Sleep(50 * time.Millisecond)
@@ -313,10 +368,53 @@ func (s *Server) do(req Request) (any, error) {
 	return nil, fmt.Errorf("unknown op %q", req.Op)
 }
 
-func newID() string {
-	var b [6]byte
-	rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+// ask asks the app's window, and waits for its answer.
+func (s *Server) ask(ev Event) (any, error) {
+	ch := make(chan Answer, 1)
+	s.mu.Lock()
+	ui := s.ui
+	if ui == nil {
+		s.mu.Unlock()
+		return nil, errors.New("no GoRex window is open")
+	}
+	s.eventSeq++
+	ev.Seq = s.eventSeq
+	s.asked[ev.Seq] = ch
+	s.mu.Unlock()
+	ui.send(Response{Event: &ev})
+	select {
+	case a := <-ch:
+		if a.Error != "" {
+			return nil, errors.New(a.Error)
+		}
+		return a.Data, nil
+	case <-time.After(10 * time.Second):
+		s.mu.Lock()
+		delete(s.asked, ev.Seq)
+		s.mu.Unlock()
+		return nil, errors.New("the GoRex window did not answer")
+	}
+}
+
+// linkCommand links the gorex command, in BinDir, to the server's
+// executable.
+func linkCommand(exe string) {
+	if exe == "" {
+		return
+	}
+	dir := BinDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	link := filepath.Join(dir, "gorex")
+	if cur, err := os.Readlink(link); err == nil && cur == exe {
+		return
+	}
+	tmp := link + ".tmp"
+	os.Remove(tmp)
+	if os.Symlink(exe, tmp) == nil {
+		os.Rename(tmp, link)
+	}
 }
 
 // hostInfo describes this machine; it may take a second.

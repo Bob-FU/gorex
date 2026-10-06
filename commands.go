@@ -213,8 +213,8 @@ func (a *App) restartFocused() {
 	if old.term != nil {
 		cols, rows = old.term.Size()
 	}
-	p := a.newPane(a.currentDir(), cols, rows)
-	p.Tab, p.Node = t, old.Node
+	p := a.newPane(t, a.currentDir(), cols, rows)
+	p.Node, p.Name = old.Node, old.Name
 	old.Node.Pane = p
 	old.closed = true
 	if old.term != nil {

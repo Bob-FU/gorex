@@ -35,6 +35,34 @@ terminal plugin (Ghostty's libghostty-vt). No webview, no cgo: one ~15 MB app.
 - Light and dark appearances (View ▸ Appearance), text size (⌘+ ⌘− ⌘0),
   JetBrains Mono embedded.
 
+## Command line
+
+The shells of GoRex drive its window with `gorex`, which the session
+server puts at the end of their `PATH`: a script, or an agent, splits the
+pane it runs in, runs a program in the new pane where you see it, reads
+its screen and closes it. The commands and flags are those of
+[cmux](https://github.com/manaflow-ai/cmux)'s that such scripts use; a
+surface is a pane's session, a workspace its tab, both UUIDs.
+
+```sh
+gorex new-split right --focus false    # OK surface:<uuid> workspace:<uuid>
+gorex rename-tab --surface <uuid> Codex
+gorex send --surface <uuid> -- 'make test\n'   # \n is Enter
+gorex send-key --surface <uuid> ctrl-c
+gorex read-screen --surface <uuid> --scrollback --lines 60
+gorex close-surface --surface <uuid>   # never without --surface
+gorex list-surfaces                    # every session; --json for more
+gorex identify                         # this shell's surface and workspace
+gorex ping
+```
+
+`--surface` defaults to the shell's own, `GOREX_SURFACE_ID`, but for
+`close-surface`, which closes only the surface it is named. Shells find
+their tab in `GOREX_WORKSPACE_ID` and the server in `GOREX_SOCKET`; GoRex
+takes out the `CMUX_` variables of a cmux it was started from.
+`scripts/cmux-tui-run.sh` runs a TUI program in a split of its own until
+it writes a sentinel file, in GoRex or in cmux.
+
 ## Shortcuts
 
 | | |
@@ -85,6 +113,7 @@ directories.
 | `view.go`, `tabs.go`, `host.go`, `commands.go` | the interface: title bar, tabs, panes, host popover, menus and palette |
 | `programs.go` | how programs show: names, glyphs, tile colors |
 | `style.go`, `settings.go` | colors, fonts, terminal themes; appearance and text size |
+| `cli.go`, `control.go` | the command line, and what the window does for it |
 | `internal/rex` | the session server and its client: PTYs, foreground processes, headless screens, the socket protocol |
 
 Not replicated: Rex's connections to servers on other machines; GoRex's
