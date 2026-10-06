@@ -1,0 +1,47 @@
+name: macOS build
+
+# Builds GoRex.app for macOS (universal: Apple silicon and Intel) on every
+# push and pull request, and uploads it as an artifact of the run.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # A pull request from a branch of this repository is built by its push
+    # already; one from a fork is built here.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        # Ad hoc signed: no Developer ID in CI.
+        run: go tool mygo build -platform darwin/universal -sign - -o dist
+
+      - name: Zip the app
+        # ditto keeps the bundle's symlinks, permissions and signature.
+        run: |
+          cd dist/darwin-universal
+          ditto -c -k --keepParent GoRex.app GoRex-macos-universal.zip
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoRex-macos-universal-${{ github.sha }}
+          path: |
+            dist/darwin-universal/GoRex-macos-universal.zip
+            dist/darwin-universal/*.dmg
+          if-no-files-found: error
