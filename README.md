@@ -35,6 +35,29 @@ terminal plugin (Ghostty's libghostty-vt). No webview, no cgo: one ~15 MB app.
 - Light and dark appearances (View ▸ Appearance), text size (⌘+ ⌘− ⌘0),
   JetBrains Mono embedded.
 
+## Font and colors
+
+GoRex takes the terminals' font and colors from Ghostty's configuration,
+as cmux does: `~/.config/ghostty/config`, then cmux's
+(`~/Library/Application Support/com.cmuxterm.app/config`), then its own,
+which View ▸ Open Configuration… (⌘,) opens. It applies them as the files
+change.
+
+```
+font-family = MesloLGS NF
+font-size = 13
+adjust-cell-height = 10%
+theme = light:Catppuccin Latte,dark:Catppuccin Mocha
+background = #1e1e2e
+palette = 4=#89b4fa
+```
+
+`theme` takes any of Ghostty's hundreds of themes, which the command
+palette lists as you type `theme`; `font Meslo` there sets the font. The
+window's colors follow the theme, light or dark. The symbols of the Nerd
+Fonts come with GoRex, so prompts such as powerlevel10k's draw in any
+font.
+
 ## Command line
 
 The shells of GoRex drive its window with `gorex`, which the session
@@ -112,7 +135,7 @@ directories.
 | `state.go` | tabs, the tree of splits, panes, saving and restoring the layout |
 | `view.go`, `tabs.go`, `host.go`, `commands.go` | the interface: title bar, tabs, panes, host popover, menus and palette |
 | `programs.go` | how programs show: names, glyphs, tile colors |
-| `style.go`, `settings.go` | colors, fonts, terminal themes; appearance and text size |
+| `style.go`, `settings.go`, `config.go` | colors, fonts, terminal themes; appearance and text size; Ghostty's configuration |
 | `cli.go`, `control.go` | the command line, and what the window does for it |
 | `internal/rex` | the session server and its client: PTYs, foreground processes, headless screens, the socket protocol |
 
@@ -120,4 +143,5 @@ Not replicated: Rex's connections to servers on other machines; GoRex's
 server listens on a local socket only.
 
 Icons: [Lucide](https://lucide.dev) (ISC) and [Simple Icons](https://simpleicons.org)
-(CC0). Font: [JetBrains Mono](https://www.jetbrains.com/lp/mono/) (OFL).
+(CC0). Fonts: [JetBrains Mono](https://www.jetbrains.com/lp/mono/) (OFL) and
+the [Nerd Fonts](https://www.nerdfonts.com)' Symbols Only (MIT).

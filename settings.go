@@ -28,10 +28,11 @@ func loadSettings() {
 	if b, err := os.ReadFile(settingsPath()); err == nil {
 		json.Unmarshal(b, &prefs)
 	}
+	// No size, or none GoRex takes, is the configuration's.
 	if prefs.FontSize < 6 || prefs.FontSize > 40 {
-		prefs.FontSize = defaultFontSize
+		prefs.FontSize = 0
 	}
-	termFont.Size = prefs.FontSize
+	loadConfig()
 	applyAppearance()
 }
 
@@ -58,11 +59,14 @@ func (a *App) setAppearance(v string) {
 	saveSettings()
 }
 
-// setFontSize changes the size of the terminals' text, in every pane.
+// setFontSize changes the size of the terminals' text, in every pane: 0
+// gives back the configuration's.
 func (a *App) setFontSize(size float32) {
-	size = min(max(size, 8), 32)
+	if size != 0 {
+		size = min(max(size, 8), 32)
+	}
 	prefs.FontSize = size
-	termFont.Size = size
+	termFont.Size = fontSize()
 	for _, t := range a.tabs {
 		for _, p := range t.panes() {
 			if p.term != nil {

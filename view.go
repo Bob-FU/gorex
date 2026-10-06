@@ -164,6 +164,13 @@ func (a *App) paneCard(c *ui.Context, k *colors, t *Tab, p *Pane) *ui.Element {
 	if focused {
 		bg, border, shadow = k.cardFocused, k.cardBorderFocused, k.shadowFocused
 	}
+	// A theme of the configuration colors the card as the terminal.
+	if tb, ok := termBackground(c.Theme().Dark); ok {
+		bg = tb
+		if !focused {
+			bg.A = 230
+		}
+	}
 	card.Background(bg).Border(1, border).
 		Shadow(0, 1, 2, 0, shadow).
 		Shadow(0, 6, 22, -2, shadow)

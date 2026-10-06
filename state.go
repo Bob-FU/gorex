@@ -196,8 +196,9 @@ func (a *App) newPane(t *Tab, dir string, cols, rows int) *Pane {
 
 // attach makes the pane's terminal, attached to its session.
 func (a *App) attach(p *Pane, cols, rows int) {
+	light, dark := themes()
 	if p.SID == "" {
-		term, err := terminal.New(terminal.Options{Conn: nopConn{}, Transparent: true, Font: termFont, Theme: lightTerm, DarkTheme: darkTerm})
+		term, err := terminal.New(terminal.Options{Conn: nopConn{}, Transparent: true, Font: termFont, Theme: light, DarkTheme: dark})
 		if err == nil {
 			term.Feed([]byte("\x1b[31mCould not start a session: " + a.err + "\x1b[0m\r\n"))
 			p.term = term
@@ -219,8 +220,8 @@ func (a *App) attach(p *Pane, cols, rows int) {
 	term, err := terminal.New(terminal.Options{
 		Conn:        p.stream,
 		Font:        termFont,
-		Theme:       lightTerm,
-		DarkTheme:   darkTerm,
+		Theme:       light,
+		DarkTheme:   dark,
 		Transparent: true,
 		OnTitle: func(title string) {
 			update(func() { p.title = title })
@@ -851,6 +852,9 @@ func (a *App) poll(win *mygo.Window, client *rex.Client) {
 			})
 			return
 		case <-tick.C:
+		}
+		if configChanged() {
+			win.Update(a.applyConfig)
 		}
 		infos, err := client.List()
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -44,7 +45,9 @@ var (
 	cmdRestart     = command{Title: "Restart Shell in Pane", Run: func(a *App) { a.restartFocused() }}
 	cmdBigger      = command{Title: "Bigger Text", Accel: "CmdOrCtrl+=", Keys: "⌘+", Run: func(a *App) { a.setFontSize(termFont.Size + 1) }}
 	cmdSmaller     = command{Title: "Smaller Text", Accel: "CmdOrCtrl+-", Keys: "⌘−", Run: func(a *App) { a.setFontSize(termFont.Size - 1) }}
-	cmdActualSize  = command{Title: "Actual Size", Accel: "CmdOrCtrl+0", Keys: "⌘0", Run: func(a *App) { a.setFontSize(defaultFontSize) }}
+	cmdActualSize  = command{Title: "Actual Size", Accel: "CmdOrCtrl+0", Keys: "⌘0", Run: func(a *App) { a.setFontSize(0) }}
+	cmdConfig      = command{Title: "Open Configuration…", Accel: "CmdOrCtrl+,", Keys: "⌘,", Run: func(a *App) { a.openConfig() }}
+	cmdReload      = command{Title: "Reload Configuration", Accel: "CmdOrCtrl+Shift+,", Keys: "⇧⌘,", Run: func(a *App) { a.applyConfig() }}
 	cmdLight       = command{Title: "Appearance: Light", Run: func(a *App) { a.setAppearance("light") }}
 	cmdDark        = command{Title: "Appearance: Dark", Run: func(a *App) { a.setAppearance("dark") }}
 	cmdSystem      = command{Title: "Appearance: System", Run: func(a *App) { a.setAppearance("") }}
@@ -58,6 +61,7 @@ var paletteCommands = []*command{
 	&cmdFocusLeft, &cmdFocusRight, &cmdFocusUp, &cmdFocusDown,
 	&cmdGrowLeft, &cmdGrowRight, &cmdGrowUp, &cmdGrowDown,
 	&cmdBigger, &cmdSmaller, &cmdActualSize, &cmdLight, &cmdDark, &cmdSystem,
+	&cmdConfig, &cmdReload,
 	&cmdClearScroll, &cmdRestart, &cmdEndAll,
 }
 
@@ -132,6 +136,8 @@ func (a *App) menu() *mygo.Menu {
 				appearance("Light", "light"),
 				appearance("Dark", "dark"),
 			}},
+			item(&cmdConfig),
+			item(&cmdReload),
 			mygo.Separator(),
 			{Role: mygo.RoleToggleFullScreen},
 			{Role: mygo.RoleToggleDevTools, Label: "Inspector", Hidden: !mygo.IsDev()},
@@ -290,6 +296,27 @@ func (a *App) paletteItems() []paletteItem {
 			})
 		}
 	}
+	// "theme catp" lists the themes of Ghostty, and "font Meslo" sets the
+	// font, in GoRex's configuration.
+	if rest, ok := cutWord(a.paletteQuery, "theme"); ok {
+		n := 0
+		for _, name := range terminal.GhosttyThemes() {
+			if rest != "" && !fuzzy(strings.ToLower(name), strings.ToLower(rest)) {
+				continue
+			}
+			if n++; n > 80 {
+				break
+			}
+			name := name
+			items = append(items, paletteItem{title: "Theme: " + name, glyph: "sparkles", run: func() { a.setConfig("theme", name) }})
+		}
+		items = append(items, paletteItem{title: "Theme: GoRex's own", glyph: "sparkles", run: func() { a.setConfig("theme", "") }})
+	}
+	if rest, ok := cutWord(a.paletteQuery, "font"); ok && rest != "" {
+		items = append(items, paletteItem{title: "Font: " + rest, detail: "and Nerd Font symbols", glyph: "sparkles", run: func() {
+			a.setConfig("font-family", `""`, rest)
+		}})
+	}
 	for _, cmd := range paletteCommands {
 		if cmd.Hidden || !match(cmd.Title) {
 			continue
@@ -298,6 +325,20 @@ func (a *App) paletteItems() []paletteItem {
 		items = append(items, paletteItem{title: cmd.Title, keys: cmd.Keys, glyph: "command", run: func() { cmd.Run(a) }})
 	}
 	return items
+}
+
+// cutWord returns what follows the word w at the start of the query, and
+// whether it is there.
+func cutWord(query, w string) (string, bool) {
+	q := strings.TrimSpace(query)
+	if len(q) < len(w) || !strings.EqualFold(q[:len(w)], w) {
+		return "", false
+	}
+	rest := q[len(w):]
+	if rest != "" && rest[0] != ' ' && rest[0] != ':' {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(rest, ":")), true
 }
 
 // fuzzy reports whether the letters of q appear in s, in order.

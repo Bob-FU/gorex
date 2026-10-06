@@ -102,7 +102,7 @@ var darkColors = colors{
 }
 
 func colorsOf(c *ui.Context) *colors {
-	if c.Theme().Dark {
+	if themedDark(c.Theme().Dark) {
 		return &darkColors
 	}
 	return &lightColors
@@ -131,13 +131,20 @@ var fontItalic []byte
 //go:embed assets/fonts/JetBrainsMono-BoldItalic.ttf
 var fontBoldItalic []byte
 
+// The symbols of the Nerd Fonts, as powerlevel10k's prompts draw, for the
+// fonts that lack them.
+//
+//go:embed assets/fonts/SymbolsNerdFontMono-Regular.ttf
+var fontSymbols []byte
+
 func registerFonts() {
 	for _, f := range [][]byte{fontRegular, fontBold, fontItalic, fontBoldItalic} {
 		ui.RegisterFont(f, "JetBrains Mono")
 	}
+	ui.RegisterFont(fontSymbols, "Symbols Nerd Font Mono")
 }
 
-var termFont = terminal.Font{Family: "JetBrains Mono, SF Mono, Menlo, monospace", Size: 11.6, LineHeight: 1.0}
+var termFont = terminal.Font{Family: fallbackFamilies, Size: 11.6, LineHeight: 1.0}
 
 // The terminals' colors: soft ink on the panes' paper, and the dark kind.
 var lightTerm = &terminal.Theme{
